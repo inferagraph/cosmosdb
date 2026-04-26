@@ -1,9 +1,10 @@
 import { Datasource } from '@inferagraph/core';
 import type {
-  DataAdapterConfig, GraphData, NodeId, NodeData,
+  DataAdapterConfig, GraphData, NodeId, NodeData, EdgeData,
   ContentData, PaginationOptions, PaginatedResult, DataFilter,
 } from '@inferagraph/core';
 import { CosmosClient, Container, Database } from '@azure/cosmos';
+import type { SqlParameter } from '@azure/cosmos';
 import type { CosmosDbDatasourceConfig } from './types.js';
 
 export class CosmosDbDatasource extends Datasource {
@@ -56,7 +57,7 @@ export class CosmosDbDatasource extends Datasource {
     const edgeCont = this.edgesContainer ?? this.container!;
     const nodeIds = nodes.map(n => n.id);
 
-    let edges: { id: string; sourceId: string; targetId: string; attributes: Record<string, unknown> }[] = [];
+    let edges: EdgeData[] = [];
     if (nodeIds.length > 0) {
       const { resources: edgeDocs } = await edgeCont.items
         .query({
@@ -205,7 +206,7 @@ export class CosmosDbDatasource extends Datasource {
     this.ensureConnected();
 
     let query = `SELECT * FROM c WHERE c._docType = 'node'`;
-    const parameters: Array<{ name: string; value: unknown }> = [];
+    const parameters: SqlParameter[] = [];
 
     if (filter.types?.length) {
       query += ` AND c.type IN (@types)`;
@@ -219,7 +220,7 @@ export class CosmosDbDatasource extends Datasource {
       let i = 0;
       for (const [key, value] of Object.entries(filter.attributes)) {
         query += ` AND c.${key} = @attr${i}`;
-        parameters.push({ name: `@attr${i}`, value });
+        parameters.push({ name: `@attr${i}`, value: value as SqlParameter['value'] });
         i++;
       }
     }
@@ -265,13 +266,13 @@ export class CosmosDbDatasource extends Datasource {
     return { id: String(id), attributes };
   }
 
-  private transformEdgeDocument(doc: Record<string, unknown>): { id: string; sourceId: string; targetId: string; attributes: Record<string, unknown> } {
-    const { id, sourceId, targetId, _rid, _self, _etag, _attachments, _ts, _docType, ...attributes } = doc;
+  private transformEdgeDocument(doc: Record<string, unknown>): EdgeData {
+    const { id, sourceId, targetId, _rid, _self, _etag, _attachments, _ts, _docType, type, ...rest } = doc;
     return {
       id: String(id),
       sourceId: String(sourceId),
       targetId: String(targetId),
-      attributes,
+      attributes: { type: String(type ?? ''), ...rest },
     };
   }
 
