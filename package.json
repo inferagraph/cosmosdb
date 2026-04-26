@@ -22,6 +22,7 @@
     "lint": "tsc --noEmit",
     "clean": "rm -rf dist"
   },
+  "packageManager": "pnpm@10.33.2",
   "license": "MIT",
   "peerDependencies": {
     "@inferagraph/core": "^0.1.0"
