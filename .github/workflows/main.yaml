@@ -46,6 +46,10 @@ jobs:
           echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
+      - name: Pin npm to Trusted-Publishing-compatible version
+        if: steps.version.outputs.published != steps.version.outputs.current
+        run: npm install -g npm@11.5.1
+
       - name: Publish to npm
         if: steps.version.outputs.published != steps.version.outputs.current
         run: npm publish --provenance --access public
