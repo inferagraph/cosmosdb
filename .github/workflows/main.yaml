@@ -46,10 +46,6 @@ jobs:
           echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
-      - name: Install latest npm
-        if: steps.version.outputs.published != steps.version.outputs.current
-        run: npm install -g npm@latest
-
       - name: Publish to npm
         if: steps.version.outputs.published != steps.version.outputs.current
         run: npm publish --provenance --access public
