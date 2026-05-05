@@ -1,6 +1,6 @@
 {
   "name": "@inferagraph/cosmosdb-datasource",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Azure Cosmos DB NoSQL datasource for InferaGraph",
   "repository": { "type": "git", "url": "git+https://github.com/inferagraph/cosmosdb-datasource.git" },
   "type": "module",

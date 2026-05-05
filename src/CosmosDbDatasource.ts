@@ -85,28 +85,43 @@ export class CosmosDbDatasource extends Datasource {
     return this.transformDocument(resources[0]);
   }
 
-  async getNeighbors(nodeId: NodeId, _depth: number = 1): Promise<GraphData> {
+  async getNeighbors(nodeId: NodeId, depth: number = 1): Promise<GraphData> {
     this.ensureConnected();
-    const edgeCont = this.edgesContainer ?? this.container!;
 
-    // Find edges connected to this node
-    const { resources: edgeDocs } = await edgeCont.items
-      .query({
-        query: `SELECT * FROM c WHERE c._docType = 'edge' AND (c.sourceId = @nodeId OR c.targetId = @nodeId)`,
-        parameters: [{ name: '@nodeId', value: nodeId }],
-      })
-      .fetchAll();
+    // Cosmos DB NoSQL has no native graph traversal. depth>1 is implemented as
+    // application-level BFS: iterate 1-hop fan-out from each newly discovered
+    // frontier node up to `depth` levels. Dedupe edges and nodes by id.
+    const effectiveDepth = Math.max(1, Math.floor(depth));
 
-    // Get IDs of neighbor nodes
-    const neighborIds = new Set<string>();
-    for (const edge of edgeDocs) {
-      if (edge.sourceId !== nodeId) neighborIds.add(edge.sourceId);
-      if (edge.targetId !== nodeId) neighborIds.add(edge.targetId);
+    const visitedNodeIds = new Set<NodeId>([nodeId]);
+    const collectedEdgeDocs = new Map<string, Record<string, unknown>>();
+    let frontier: NodeId[] = [nodeId];
+
+    for (let level = 0; level < effectiveDepth && frontier.length > 0; level++) {
+      const nextFrontier: NodeId[] = [];
+
+      for (const currentId of frontier) {
+        const edgeDocs = await this.fetchEdgesForNode(currentId);
+        for (const edge of edgeDocs) {
+          const edgeId = String(edge.id);
+          if (!collectedEdgeDocs.has(edgeId)) {
+            collectedEdgeDocs.set(edgeId, edge);
+          }
+          const sourceId = String(edge.sourceId);
+          const targetId = String(edge.targetId);
+          const otherId = sourceId === currentId ? targetId : sourceId;
+          if (!visitedNodeIds.has(otherId)) {
+            visitedNodeIds.add(otherId);
+            nextFrontier.push(otherId);
+          }
+        }
+      }
+
+      frontier = nextFrontier;
     }
-    neighborIds.add(nodeId);
 
-    // Fetch neighbor nodes
-    const allIds = [...neighborIds];
+    // Fetch all visited node documents in a single query
+    const allIds = [...visitedNodeIds];
     const { resources: nodeDocs } = await this.container!.items
       .query({
         query: `SELECT * FROM c WHERE c.id IN (@ids)`,
@@ -115,9 +130,20 @@ export class CosmosDbDatasource extends Datasource {
       .fetchAll();
 
     const nodes = nodeDocs.map(doc => this.transformDocument(doc));
-    const edges = edgeDocs.map(doc => this.transformEdgeDocument(doc));
+    const edges = [...collectedEdgeDocs.values()].map(doc => this.transformEdgeDocument(doc));
 
     return { nodes, edges };
+  }
+
+  private async fetchEdgesForNode(nodeId: NodeId): Promise<Record<string, unknown>[]> {
+    const edgeCont = this.edgesContainer ?? this.container!;
+    const { resources } = await edgeCont.items
+      .query({
+        query: `SELECT * FROM c WHERE c._docType = 'edge' AND (c.sourceId = @nodeId OR c.targetId = @nodeId)`,
+        parameters: [{ name: '@nodeId', value: nodeId }],
+      })
+      .fetchAll();
+    return resources as Record<string, unknown>[];
   }
 
   async findPath(fromId: NodeId, toId: NodeId): Promise<GraphData> {

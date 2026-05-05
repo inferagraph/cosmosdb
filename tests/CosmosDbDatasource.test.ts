@@ -352,6 +352,89 @@ describe('CosmosDbDatasource', () => {
       expect(result.nodes).toHaveLength(2);
       expect(mockState.edgesContainerItems.query).toHaveBeenCalled();
     });
+
+    it('should expand to depth 2 via BFS, returning 2-hop neighbors', async () => {
+      await datasource.connect();
+
+      // Order of calls when getNeighbors('n1', 2) runs (single container):
+      //   1. edges for n1 -> [e1]            (n1 <-> n2)
+      //   2. edges for n2 -> [e1, e2]         (n2 <-> n3)  -> e1 deduped
+      //   3. final node fetch -> [n1, n2, n3]
+      let callCount = 0;
+      mockState.containerItems = {
+        query: vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockEdgeDoc1] }) };
+          }
+          if (callCount === 2) {
+            return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockEdgeDoc1, mockEdgeDoc2] }) };
+          }
+          return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockNodeDoc1, mockNodeDoc2, mockNodeDoc3] }) };
+        }),
+      };
+
+      const result = await datasource.getNeighbors('n1', 2);
+
+      // Two BFS edge queries (depth=2) + 1 final node query = 3 total
+      expect(mockState.containerItems.query).toHaveBeenCalledTimes(3);
+      expect(result.nodes.map(n => n.id).sort()).toEqual(['n1', 'n2', 'n3']);
+      // Edges deduped by id: e1 fetched twice, must appear once
+      expect(result.edges.map(e => e.id).sort()).toEqual(['e1', 'e2']);
+    });
+
+    it('should dedupe nodes and edges across BFS levels', async () => {
+      await datasource.connect();
+
+      // Both n1 and n2 return the same edge e1 in their 1-hop expansions.
+      // depth=2 should not emit duplicate e1 nor revisit n1/n2.
+      let callCount = 0;
+      mockState.containerItems = {
+        query: vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            // edges for n1
+            return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockEdgeDoc1] }) };
+          }
+          if (callCount === 2) {
+            // edges for n2 -- includes e1 again (already collected)
+            return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockEdgeDoc1] }) };
+          }
+          // final node fetch
+          return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockNodeDoc1, mockNodeDoc2] }) };
+        }),
+      };
+
+      const result = await datasource.getNeighbors('n1', 2);
+      expect(result.nodes.map(n => n.id).sort()).toEqual(['n1', 'n2']);
+      expect(result.edges).toHaveLength(1);
+      expect(result.edges[0].id).toBe('e1');
+    });
+
+    it('should terminate BFS early when no new neighbors are found', async () => {
+      await datasource.connect();
+
+      // depth=5 but the graph is just n1 with no edges. Loop must exit
+      // after the first level because frontier becomes empty.
+      let callCount = 0;
+      mockState.containerItems = {
+        query: vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return { fetchAll: vi.fn().mockResolvedValue({ resources: [] }) };
+          }
+          // final node fetch
+          return { fetchAll: vi.fn().mockResolvedValue({ resources: [mockNodeDoc1] }) };
+        }),
+      };
+
+      const result = await datasource.getNeighbors('n1', 5);
+
+      // 1 edge query (level 0) + 1 final node query = 2 total
+      expect(mockState.containerItems.query).toHaveBeenCalledTimes(2);
+      expect(result.nodes.map(n => n.id)).toEqual(['n1']);
+      expect(result.edges).toHaveLength(0);
+    });
   });
 
   // --- findPath ---
