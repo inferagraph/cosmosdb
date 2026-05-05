@@ -28,6 +28,10 @@ console.log(view.nodes, view.edges);
 await datasource.disconnect();
 ```
 
+### Multi-hop neighbors
+
+`getNeighbors(nodeId, depth)` supports `depth > 1`. Cosmos DB NoSQL has no native graph traversal, so the datasource does an application-level BFS — one 1-hop fan-out per level, deduping nodes and edges by id. Single-hop callers see no change.
+
 ### Configuration
 
 | Option | Required | Description |
