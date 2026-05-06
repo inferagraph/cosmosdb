@@ -2,6 +2,7 @@ import { Datasource } from '@inferagraph/core';
 import type {
   DataAdapterConfig, GraphData, NodeId, NodeData, EdgeData,
   ContentData, PaginationOptions, PaginatedResult, DataFilter,
+  SearchVectorHit, Vector,
 } from '@inferagraph/core';
 import { CosmosClient, Container, Database } from '@azure/cosmos';
 import type { SqlParameter } from '@azure/cosmos';
@@ -259,6 +260,43 @@ export class CosmosDbDatasource extends Datasource {
     return this.paginate(allItems, pagination);
   }
 
+  /**
+   * Low-level vector-native top-K against the units container. Hosts that
+   * want to bypass {@link VectorEmbeddingStore} and call straight into the
+   * datasource can use this method — same SQL shape, same sort guarantee.
+   *
+   * Provider-agnostic: the embedding-field name is taken from
+   * {@link CosmosDbDatasourceConfig.embeddingPath} (default `/embedding`),
+   * so hosts using a different vector field can override it without forking
+   * the datasource.
+   */
+  async searchVector(
+    queryEmbedding: Vector,
+    opts: { top: number; container?: 'units' | 'inferred_edges' },
+  ): Promise<SearchVectorHit[]> {
+    this.ensureConnected();
+    const fieldName = this.embeddingFieldName();
+    const container =
+      opts.container === 'inferred_edges' && this.config.inferredEdgesContainer
+        ? this.database!.container(this.config.inferredEdgesContainer)
+        : this.container!;
+    const { resources } = await container.items
+      .query({
+        query: `SELECT TOP @k c.id, VectorDistance(c.${fieldName}, @q) AS score FROM c ORDER BY VectorDistance(c.${fieldName}, @q)`,
+        parameters: [
+          { name: '@k', value: opts.top },
+          { name: '@q', value: queryEmbedding },
+        ],
+      })
+      .fetchAll();
+    const hits: SearchVectorHit[] = (resources as { id: string; score: number }[]).map(row => ({
+      nodeId: row.id,
+      score: row.score,
+    }));
+    hits.sort((a, b) => b.score - a.score);
+    return hits;
+  }
+
   async getContent(nodeId: NodeId): Promise<ContentData | undefined> {
     this.ensureConnected();
 
@@ -280,6 +318,11 @@ export class CosmosDbDatasource extends Datasource {
   }
 
   // --- Private Helpers ---
+
+  private embeddingFieldName(): string {
+    const path = this.config.embeddingPath ?? '/embedding';
+    return path.startsWith('/') ? path.slice(1) : path;
+  }
 
   private ensureConnected(): void {
     if (!this.container) {
