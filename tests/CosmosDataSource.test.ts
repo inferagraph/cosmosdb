@@ -110,10 +110,10 @@ vi.mock('@azure/cosmos', () => {
   };
 });
 
-import { CosmosDbDatasource } from '../src/CosmosDbDatasource.js';
+import { CosmosDataSource } from '../src/CosmosDataSource.js';
 
-describe('CosmosDbDatasource', () => {
-  let datasource: CosmosDbDatasource;
+describe('CosmosDataSource', () => {
+  let datasource: CosmosDataSource;
   const config = {
     endpoint: 'https://test.documents.azure.com:443/',
     key: 'test-key',
@@ -124,7 +124,7 @@ describe('CosmosDbDatasource', () => {
   beforeEach(() => {
     mockState.containerItems = createMockItems([]);
     mockState.edgesContainerItems = createMockItems([]);
-    datasource = new CosmosDbDatasource(config);
+    datasource = new CosmosDataSource(config);
   });
 
   // --- name property ---
@@ -150,7 +150,7 @@ describe('CosmosDbDatasource', () => {
     });
 
     it('should set up edgesContainer when configured', async () => {
-      const dsWithEdges = new CosmosDbDatasource({
+      const dsWithEdges = new CosmosDataSource({
         ...config,
         edgesContainer: 'edges',
       });
@@ -163,43 +163,43 @@ describe('CosmosDbDatasource', () => {
   describe('ensureConnected', () => {
     it('should throw when not connected', async () => {
       await expect(datasource.getNode('n1')).rejects.toThrow(
-        'CosmosDbDatasource is not connected. Call connect() first.',
+        'CosmosDataSource is not connected. Call connect() first.',
       );
     });
 
     it('should throw for getInitialView when not connected', async () => {
       await expect(datasource.getInitialView()).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
 
     it('should throw for getNeighbors when not connected', async () => {
       await expect(datasource.getNeighbors('n1')).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
 
     it('should throw for findPath when not connected', async () => {
       await expect(datasource.findPath('n1', 'n2')).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
 
     it('should throw for search when not connected', async () => {
       await expect(datasource.search('test')).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
 
     it('should throw for filter when not connected', async () => {
       await expect(datasource.filter({})).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
 
     it('should throw for getContent when not connected', async () => {
       await expect(datasource.getContent('n1')).rejects.toThrow(
-        'CosmosDbDatasource is not connected.',
+        'CosmosDataSource is not connected.',
       );
     });
   });
@@ -330,7 +330,7 @@ describe('CosmosDbDatasource', () => {
     });
 
     it('should use separate edgesContainer when configured', async () => {
-      const dsWithEdges = new CosmosDbDatasource({
+      const dsWithEdges = new CosmosDataSource({
         ...config,
         edgesContainer: 'edges',
       });

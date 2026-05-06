@@ -31,15 +31,15 @@ vi.mock('@azure/cosmos', () => {
   };
 });
 
-import { CosmosDbDatasource } from '../src/CosmosDbDatasource.js';
+import { CosmosDataSource } from '../src/CosmosDataSource.js';
 
-describe('CosmosDbDatasource.searchVector', () => {
-  let datasource: CosmosDbDatasource;
+describe('CosmosDataSource.searchVector', () => {
+  let datasource: CosmosDataSource;
 
   beforeEach(() => {
     mockState.queryCalls.length = 0;
     mockState.queryResources.length = 0;
-    datasource = new CosmosDbDatasource({
+    datasource = new CosmosDataSource({
       endpoint: 'x',
       key: 'y',
       database: 'db',
@@ -49,11 +49,11 @@ describe('CosmosDbDatasource.searchVector', () => {
 
   it('throws when not connected', async () => {
     await expect(datasource.searchVector([0.1, 0.2], { top: 5 })).rejects.toThrow(
-      'CosmosDbDatasource is not connected.',
+      'CosmosDataSource is not connected.',
     );
   });
 
-  it('uses the same SQL shape as VectorEmbeddingStore.searchVector', async () => {
+  it('uses the same SQL shape as CosmosVectorEmbeddingStore.searchVector', async () => {
     await datasource.connect();
     mockState.queryResources[0] = [];
     await datasource.searchVector([0.1, 0.2, 0.3], { top: 4 });

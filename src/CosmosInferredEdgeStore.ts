@@ -1,4 +1,5 @@
-import type { CosmosClient, Container, Database } from '@azure/cosmos';
+import { CosmosClient } from '@azure/cosmos';
+import type { Container, Database } from '@azure/cosmos';
 import type {
   InferredEdge,
   InferredEdgeSource,
@@ -126,7 +127,7 @@ export class CosmosInferredEdgeStore implements InferredEdgeStore {
 
   /**
    * Vector-native top-K against the inferred_edges container. Same SQL
-   * shape as {@link VectorEmbeddingStore.searchVector}; sorted descending
+   * shape as {@link CosmosVectorEmbeddingStore.searchVector}; sorted descending
    * by score so the highest-similarity hits surface first.
    */
   async searchInferredEdges(
@@ -179,6 +180,39 @@ export class CosmosInferredEdgeStore implements InferredEdgeStore {
       perSource: edge.perSource,
     };
   }
+}
+
+/**
+ * Configuration for {@link cosmosInferredEdgeStore}. Mirrors
+ * {@link CosmosInferredEdgeStoreConfig} but trades the pre-built `client`
+ * for `endpoint` + `key`.
+ */
+export interface CosmosInferredEdgeStoreFactoryConfig {
+  endpoint: string;
+  key: string;
+  database: string;
+  container?: string;
+  embeddingPath?: string;
+  embeddingDimensions?: number;
+  /** Documentation-only mirror of provisioning's vector data type. */
+  dataType?: 'Float32' | 'Float16' | 'Int8';
+}
+
+/**
+ * Construct a {@link CosmosInferredEdgeStore}. Factory owns SDK construction;
+ * use the class constructor for shared-client scenarios.
+ */
+export function cosmosInferredEdgeStore(
+  config: CosmosInferredEdgeStoreFactoryConfig,
+): CosmosInferredEdgeStore {
+  const client = new CosmosClient({ endpoint: config.endpoint, key: config.key });
+  return new CosmosInferredEdgeStore({
+    client,
+    database: config.database,
+    container: config.container,
+    embeddingPath: config.embeddingPath,
+    embeddingDimensions: config.embeddingDimensions,
+  });
 }
 
 function is404(err: unknown): boolean {

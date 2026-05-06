@@ -186,4 +186,94 @@ describe('provisionVectorContainers', () => {
     expect(mockState.createCalls).toHaveLength(1);
     expect((mockState.createCalls[0] as { id: string }).id).toBe('custom_edges');
   });
+
+  // ---- Fix 5: alter-rejection handling ----
+  describe('alter-rejection (Fix 5)', () => {
+    it('throws a clear, actionable message when replace() is rejected with the known Cosmos alter error', async () => {
+      mockState.units = makeContainer('units', { exists: true });
+      const cosmosErr = Object.assign(
+        new Error("Operation 'replace' on resource 'colls' is not allowed"),
+        { code: 400, substatus: 1001 },
+      );
+      mockState.units.replace.mockRejectedValueOnce(cosmosErr);
+      await expect(
+        provisionVectorContainers({
+          endpoint: 'x',
+          key: 'y',
+          database: 'db',
+          unitsContainer: 'units',
+        }),
+      ).rejects.toThrow(
+        /Container 'units' exists but cannot be altered to add the vector policy\. Drop the container manually \(DATA LOSS\) and re-run provisionVectorContainers, or recreate it with the desired policy from the start\./,
+      );
+    });
+
+    it('propagates unknown errors raw (does not swallow them)', async () => {
+      mockState.units = makeContainer('units', { exists: true });
+      const otherErr = Object.assign(new Error('Unexpected boom'), { code: 500 });
+      mockState.units.replace.mockRejectedValueOnce(otherErr);
+      await expect(
+        provisionVectorContainers({
+          endpoint: 'x',
+          key: 'y',
+          database: 'db',
+          unitsContainer: 'units',
+        }),
+      ).rejects.toThrow('Unexpected boom');
+    });
+  });
+
+  // ---- Fix 6: dataType option ----
+  describe('dataType option (Fix 6)', () => {
+    it('defaults dataType to Float32 in the units vectorEmbeddingPolicy', async () => {
+      mockState.units = makeContainer('units', { exists: true });
+      await provisionVectorContainers({
+        endpoint: 'x',
+        key: 'y',
+        database: 'db',
+        unitsContainer: 'units',
+      });
+      const call = mockState.units.replace.mock.calls[0][0] as {
+        vectorEmbeddingPolicy: { vectorEmbeddings: { dataType: string }[] };
+      };
+      expect(call.vectorEmbeddingPolicy.vectorEmbeddings[0].dataType).toBe('float32');
+    });
+
+    it('honors dataType: Float16 in the vectorEmbeddingPolicy on both containers', async () => {
+      mockState.units = makeContainer('units', { exists: true });
+      mockState.inferredEdges = makeContainer('inferred_edges', { exists: false });
+      await provisionVectorContainers({
+        endpoint: 'x',
+        key: 'y',
+        database: 'db',
+        unitsContainer: 'units',
+        dataType: 'Float16',
+      });
+      const unitsCall = mockState.units.replace.mock.calls[0][0] as {
+        vectorEmbeddingPolicy: { vectorEmbeddings: { dataType: string }[] };
+      };
+      expect(unitsCall.vectorEmbeddingPolicy.vectorEmbeddings[0].dataType).toBe('float16');
+
+      const edgesDef = mockState.createCalls[0] as {
+        vectorEmbeddingPolicy: { vectorEmbeddings: { dataType: string }[] };
+      };
+      expect(edgesDef.vectorEmbeddingPolicy.vectorEmbeddings[0].dataType).toBe('float16');
+    });
+
+    it('honors dataType: Int8', async () => {
+      mockState.units = makeContainer('units', { exists: true });
+      mockState.inferredEdges = makeContainer('inferred_edges', { exists: false });
+      await provisionVectorContainers({
+        endpoint: 'x',
+        key: 'y',
+        database: 'db',
+        unitsContainer: 'units',
+        dataType: 'Int8',
+      });
+      const unitsCall = mockState.units.replace.mock.calls[0][0] as {
+        vectorEmbeddingPolicy: { vectorEmbeddings: { dataType: string }[] };
+      };
+      expect(unitsCall.vectorEmbeddingPolicy.vectorEmbeddings[0].dataType).toBe('int8');
+    });
+  });
 });

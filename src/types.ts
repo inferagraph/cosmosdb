@@ -1,4 +1,4 @@
-export interface CosmosDbDatasourceConfig {
+export interface CosmosDataSourceConfig {
   endpoint: string;
   key: string;
   database: string;

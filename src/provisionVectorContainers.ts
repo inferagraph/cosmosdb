@@ -13,6 +13,14 @@ export type VectorIndexTypeOption = 'quantizedFlat' | 'diskANN' | 'flat';
 export type DistanceFunctionOption = 'cosine' | 'dotproduct' | 'euclidean';
 
 /**
+ * Vector embedding scalar type. Float32 is the default and matches OpenAI /
+ * Voyage / most general-purpose embeddings; Float16 + Int8 are bandwidth /
+ * storage optimizations Cosmos supports natively when the host wrote the
+ * embeddings already quantized.
+ */
+export type VectorDataTypeOption = 'Float32' | 'Float16' | 'Int8';
+
+/**
  * Configuration for {@link provisionVectorContainers}. Provider-agnostic
  * defaults: 3072-dim cosine vectors at `/embedding` indexed by
  * `quantizedFlat`. Hosts targeting other embedding providers override the
@@ -34,6 +42,8 @@ export interface ProvisionVectorContainersConfig {
   vectorIndexType?: VectorIndexTypeOption;
   /** Defaults to `'cosine'`. */
   distanceFunction?: DistanceFunctionOption;
+  /** Defaults to `'Float32'`. Float16 / Int8 trade precision for storage + index size. */
+  dataType?: VectorDataTypeOption;
 }
 
 /**
@@ -48,7 +58,7 @@ export interface ProvisionVectorContainersConfig {
  *   container's vector policy via this path).
  *
  * Hosts call this once during deploy or as part of a setup script before
- * wiring {@link VectorEmbeddingStore} or {@link CosmosInferredEdgeStore}.
+ * wiring {@link CosmosVectorEmbeddingStore} or {@link CosmosInferredEdgeStore}.
  */
 export async function provisionVectorContainers(
   config: ProvisionVectorContainersConfig,
@@ -57,6 +67,7 @@ export async function provisionVectorContainers(
   const path = config.embeddingPath ?? '/embedding';
   const indexType: VectorIndexTypeOption = config.vectorIndexType ?? 'quantizedFlat';
   const distance: DistanceFunctionOption = config.distanceFunction ?? 'cosine';
+  const dataType: VectorDataTypeOption = config.dataType ?? 'Float32';
   const inferredEdgesName = config.inferredEdgesContainer ?? 'inferred_edges';
 
   const client = new CosmosClient({ endpoint: config.endpoint, key: config.key });
@@ -72,8 +83,20 @@ export async function provisionVectorContainers(
       dimensions,
       distance,
       indexType,
+      dataType,
     });
-    await unitsContainer.replace(desired);
+    try {
+      await unitsContainer.replace(desired);
+    } catch (err) {
+      if (isAlterRejection(err)) {
+        throw new Error(
+          `Container '${config.unitsContainer}' exists but cannot be altered to add the vector policy. ` +
+            `Drop the container manually (DATA LOSS) and re-run provisionVectorContainers, or recreate it ` +
+            `with the desired policy from the start.`,
+        );
+      }
+      throw err;
+    }
   }
 
   // -------- inferred_edges container: create if missing --------
@@ -87,7 +110,13 @@ export async function provisionVectorContainers(
   }
   if (!edgesResource || !hasVectorPolicyOn(edgesResource, path)) {
     await db.containers.createIfNotExists(
-      buildEdgesDefinition(inferredEdgesName, { path, dimensions, distance, indexType }),
+      buildEdgesDefinition(inferredEdgesName, {
+        path,
+        dimensions,
+        distance,
+        indexType,
+        dataType,
+      }),
     );
   }
 }
@@ -97,6 +126,7 @@ interface VectorOpts {
   dimensions: number;
   distance: DistanceFunctionOption;
   indexType: VectorIndexTypeOption;
+  dataType: VectorDataTypeOption;
 }
 
 function hasVectorPolicyOn(
@@ -129,7 +159,7 @@ function mergeVectorPolicy(
       {
         path: opts.path,
         dimensions: opts.dimensions,
-        dataType: VectorEmbeddingDataType.Float32,
+        dataType: toDataType(opts.dataType),
         distanceFunction: toDistanceFunction(opts.distance),
       },
     ],
@@ -156,7 +186,7 @@ function buildEdgesDefinition(id: string, opts: VectorOpts): ContainerDefinition
         {
           path: opts.path,
           dimensions: opts.dimensions,
-          dataType: VectorEmbeddingDataType.Float32,
+          dataType: toDataType(opts.dataType),
           distanceFunction: toDistanceFunction(opts.distance),
         },
       ],
@@ -186,4 +216,43 @@ function toDistanceFunction(value: DistanceFunctionOption): VectorEmbeddingDista
     default:
       return VectorEmbeddingDistanceFunction.Cosine;
   }
+}
+
+function toDataType(value: VectorDataTypeOption): VectorEmbeddingDataType {
+  switch (value) {
+    case 'Float16':
+      return VectorEmbeddingDataType.Float16;
+    case 'Int8':
+      return VectorEmbeddingDataType.Int8;
+    case 'Float32':
+    default:
+      return VectorEmbeddingDataType.Float32;
+  }
+}
+
+/**
+ * Detect the Cosmos error pattern that means "this container exists but its
+ * indexing or embedding policy cannot be altered in place". The SDK surfaces
+ * these as `code: 400` with a body whose message mentions the disallowed
+ * operation; some legacy / regional configurations also return `412`. We
+ * match liberally on either status + a phrase that appears in the message
+ * so the wrapper still fires when the SDK shape drifts.
+ */
+function isAlterRejection(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: number | string; message?: string; body?: unknown };
+  const code = typeof e.code === 'string' ? Number(e.code) : e.code;
+  if (code !== 400 && code !== 412) return false;
+  const message = typeof e.message === 'string' ? e.message : '';
+  const bodyMessage =
+    e.body && typeof e.body === 'object' && 'message' in (e.body as Record<string, unknown>)
+      ? String((e.body as { message: unknown }).message ?? '')
+      : '';
+  const haystack = `${message} ${bodyMessage}`.toLowerCase();
+  return (
+    haystack.includes('not allowed') ||
+    haystack.includes('cannot be modified') ||
+    haystack.includes('cannot be altered') ||
+    haystack.includes("operation 'replace'")
+  );
 }

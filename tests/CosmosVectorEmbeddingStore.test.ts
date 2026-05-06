@@ -84,17 +84,17 @@ vi.mock('@azure/cosmos', () => {
 });
 
 import { CosmosClient } from '@azure/cosmos';
-import { VectorEmbeddingStore } from '../src/VectorEmbeddingStore.js';
+import { CosmosVectorEmbeddingStore } from '../src/CosmosVectorEmbeddingStore.js';
 
-describe('VectorEmbeddingStore', () => {
+describe('CosmosVectorEmbeddingStore', () => {
   let client: CosmosClient;
-  let store: VectorEmbeddingStore;
+  let store: CosmosVectorEmbeddingStore;
 
   beforeEach(() => {
     mockState.units = makeContainer('units');
     mockState.inferredEdges = makeContainer('inferred_edges');
     client = new CosmosClient({ endpoint: 'x', key: 'y' });
-    store = new VectorEmbeddingStore({
+    store = new CosmosVectorEmbeddingStore({
       client,
       database: 'db',
       container: 'units',

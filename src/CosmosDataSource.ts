@@ -6,17 +6,17 @@ import type {
 } from '@inferagraph/core';
 import { CosmosClient, Container, Database } from '@azure/cosmos';
 import type { SqlParameter } from '@azure/cosmos';
-import type { CosmosDbDatasourceConfig } from './types.js';
+import type { CosmosDataSourceConfig } from './types.js';
 
-export class CosmosDbDatasource extends Datasource {
+export class CosmosDataSource extends Datasource {
   readonly name = 'cosmosdb';
   private client: CosmosClient | null = null;
   private database: Database | null = null;
   private container: Container | null = null;
   private edgesContainer: Container | null = null;
-  private config: CosmosDbDatasourceConfig;
+  private config: CosmosDataSourceConfig;
 
-  constructor(config: CosmosDbDatasourceConfig) {
+  constructor(config: CosmosDataSourceConfig) {
     super();
     this.config = config;
   }
@@ -262,11 +262,11 @@ export class CosmosDbDatasource extends Datasource {
 
   /**
    * Low-level vector-native top-K against the units container. Hosts that
-   * want to bypass {@link VectorEmbeddingStore} and call straight into the
+   * want to bypass {@link CosmosVectorEmbeddingStore} and call straight into the
    * datasource can use this method — same SQL shape, same sort guarantee.
    *
    * Provider-agnostic: the embedding-field name is taken from
-   * {@link CosmosDbDatasourceConfig.embeddingPath} (default `/embedding`),
+   * {@link CosmosDataSourceConfig.embeddingPath} (default `/embedding`),
    * so hosts using a different vector field can override it without forking
    * the datasource.
    */
@@ -326,7 +326,7 @@ export class CosmosDbDatasource extends Datasource {
 
   private ensureConnected(): void {
     if (!this.container) {
-      throw new Error('CosmosDbDatasource is not connected. Call connect() first.');
+      throw new Error('CosmosDataSource is not connected. Call connect() first.');
     }
   }
 
@@ -352,4 +352,17 @@ export class CosmosDbDatasource extends Datasource {
     const sliced = items.slice(offset, offset + limit);
     return { items: sliced, total, hasMore: offset + limit < total };
   }
+}
+
+/**
+ * Construct a {@link CosmosDataSource}. Recommended on-ramp: hosts pass
+ * domain config (endpoint, key, database, container) and the package owns
+ * `@azure/cosmos` SDK construction internally — the SDK becomes an
+ * implementation detail rather than a host dependency.
+ *
+ * For shared-client or custom-auth scenarios, use the {@link CosmosDataSource}
+ * class constructor directly (the escape hatch).
+ */
+export function cosmosDataSource(config: CosmosDataSourceConfig): CosmosDataSource {
+  return new CosmosDataSource(config);
 }

@@ -1,4 +1,5 @@
-import type { CosmosClient, Container, Database } from '@azure/cosmos';
+import { CosmosClient } from '@azure/cosmos';
+import type { Container, Database } from '@azure/cosmos';
 import type {
   EmbeddingRecord,
   EmbeddingStore,
@@ -9,12 +10,12 @@ import type {
 } from '@inferagraph/core';
 
 /**
- * Configuration for {@link VectorEmbeddingStore}. Targets the Cosmos NoSQL
+ * Configuration for {@link CosmosVectorEmbeddingStore}. Targets the Cosmos NoSQL
  * SQL/document protocol — provider-specific knobs (`embeddingPath`,
  * `embeddingDimensions`) are constructor options with neutral defaults so the
  * datasource stays provider-agnostic (no hard-coded OpenAI assumptions).
  */
-export interface VectorEmbeddingStoreConfig {
+export interface CosmosVectorEmbeddingStoreConfig {
   /** Live, already-constructed Cosmos client; tests inject a stub. */
   client: CosmosClient;
   /** Logical database name. */
@@ -55,13 +56,13 @@ export interface VectorEmbeddingStoreConfig {
  * any specific provider — it only knows that Cosmos exposes
  * `VectorDistance(c.embedding, @q)` over a vector-indexed column.
  */
-export class VectorEmbeddingStore implements EmbeddingStore {
+export class CosmosVectorEmbeddingStore implements EmbeddingStore {
   private readonly client: CosmosClient;
   private readonly database: Database;
   private readonly defaultContainerName: string;
   private readonly fieldName: string;
 
-  constructor(config: VectorEmbeddingStoreConfig) {
+  constructor(config: CosmosVectorEmbeddingStoreConfig) {
     this.client = config.client;
     this.database = this.client.database(config.database);
     this.defaultContainerName = config.container;
@@ -224,6 +225,51 @@ export class VectorEmbeddingStore implements EmbeddingStore {
   private containerFor(name: string): Container {
     return this.database.container(name);
   }
+}
+
+/**
+ * Configuration for {@link cosmosVectorEmbeddingStore}. Mirrors
+ * {@link CosmosVectorEmbeddingStoreConfig} but trades the pre-built `client`
+ * for `endpoint` + `key` so the factory owns SDK construction.
+ */
+export interface CosmosVectorEmbeddingStoreFactoryConfig {
+  endpoint: string;
+  key: string;
+  database: string;
+  container: string;
+  embeddingPath?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  /**
+   * Documentation-only assertion of the vector data type the host wrote into
+   * the container's policy via {@link provisionVectorContainers}. The store
+   * never enforces this — Cosmos' container policy does — but holding it on
+   * the config gives a single source of truth for hosts that compose
+   * provisioning + storage.
+   */
+  dataType?: VectorDataTypeOption;
+}
+
+/** Mirror of {@link provisionVectorContainers} `dataType` for type symmetry. */
+export type VectorDataTypeOption = 'Float32' | 'Float16' | 'Int8';
+
+/**
+ * Construct a {@link CosmosVectorEmbeddingStore}. Recommended on-ramp: hosts
+ * pass domain config and the factory builds the underlying `CosmosClient`
+ * internally. For shared-client scenarios, use the class constructor.
+ */
+export function cosmosVectorEmbeddingStore(
+  config: CosmosVectorEmbeddingStoreFactoryConfig,
+): CosmosVectorEmbeddingStore {
+  const client = new CosmosClient({ endpoint: config.endpoint, key: config.key });
+  return new CosmosVectorEmbeddingStore({
+    client,
+    database: config.database,
+    container: config.container,
+    embeddingPath: config.embeddingPath,
+    embeddingModel: config.embeddingModel,
+    embeddingDimensions: config.embeddingDimensions,
+  });
 }
 
 function is404(err: unknown): boolean {
