@@ -4,7 +4,12 @@ import {
   VectorEmbeddingDistanceFunction,
   VectorIndexType,
 } from '@azure/cosmos';
-import type { ContainerDefinition, IndexingPolicy, VectorEmbeddingPolicy, VectorIndex } from '@azure/cosmos';
+import type {
+  ContainerDefinition,
+  IndexingPolicy,
+  VectorEmbeddingPolicy,
+  VectorIndex,
+} from '@azure/cosmos';
 
 /** Vector index strategy. Cosmos NoSQL exposes three engines today. */
 export type VectorIndexTypeOption = 'quantizedFlat' | 'diskANN' | 'flat';
@@ -154,6 +159,7 @@ function mergeVectorPolicy(
     ? baseIndexing.vectorIndexes.filter(v => v.path !== opts.path)
     : [];
   vectorIndexes.push({ path: opts.path, type: toVectorIndexType(opts.indexType) });
+  const excludedPaths = buildVectorExcludePaths(baseIndexing.excludedPaths, opts.path);
   const vectorPolicy: VectorEmbeddingPolicy = {
     vectorEmbeddings: [
       {
@@ -167,7 +173,7 @@ function mergeVectorPolicy(
   return {
     ...(existing ?? { id }),
     id: existing?.id ?? id,
-    indexingPolicy: { ...baseIndexing, vectorIndexes },
+    indexingPolicy: { ...baseIndexing, vectorIndexes, excludedPaths },
     vectorEmbeddingPolicy: vectorPolicy,
   } as ContainerDefinition;
 }
@@ -180,6 +186,7 @@ function buildEdgesDefinition(id: string, opts: VectorOpts): ContainerDefinition
       indexingMode: 'consistent',
       automatic: true,
       vectorIndexes: [{ path: opts.path, type: toVectorIndexType(opts.indexType) }],
+      excludedPaths: buildVectorExcludePaths(undefined, opts.path),
     },
     vectorEmbeddingPolicy: {
       vectorEmbeddings: [
@@ -192,6 +199,24 @@ function buildEdgesDefinition(id: string, opts: VectorOpts): ContainerDefinition
       ],
     },
   } as ContainerDefinition;
+}
+
+/**
+ * Build the `excludedPaths` entry list required by Cosmos when a vector index
+ * is registered. Cosmos rejects an indexing policy that lists a path under
+ * `vectorIndexes` without ALSO listing `<path>/*` under `excludedPaths`; the
+ * surfaced error ("Vector Indexing Policy's Index Type::quantizedFlat ...
+ * capability has not been enabled") is misleading and points at the wrong
+ * cause. This helper preserves any existing exclusions on the container and
+ * appends the vector-path wildcard exactly once, so re-runs are idempotent.
+ */
+function buildVectorExcludePaths(
+  existing: IndexingPolicy['excludedPaths'] | undefined,
+  vectorPath: string,
+): NonNullable<IndexingPolicy['excludedPaths']> {
+  const wildcardForVector = `${vectorPath}/*`;
+  const filtered = (existing ?? []).filter(p => p.path !== wildcardForVector);
+  return [...filtered, { path: wildcardForVector }];
 }
 
 function toVectorIndexType(value: VectorIndexTypeOption): VectorIndexType {

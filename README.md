@@ -2,6 +2,30 @@
 
 Azure Cosmos DB NoSQL bindings for [@inferagraph/core](https://github.com/inferagraph/core): datasource, vector embedding store, inferred-edge store, conversation store, and cache provider — all in one package.
 
+## What's new in 0.3.3
+
+Bug fix for `provisionVectorContainers`. Cosmos NoSQL requires every path
+listed under `indexingPolicy.vectorIndexes` to ALSO appear under
+`indexingPolicy.excludedPaths` as `<path>/*`. When that exclusion is missing,
+Cosmos rejects the policy with the misleading error:
+
+> The Vector Indexing Policy's Index Type::quantizedFlat has been provided but the capability has not been enabled on your account.
+
+The error implies a subscription/account issue, but the actual cause is the
+malformed indexing policy. `provisionVectorContainers` now auto-adds the
+matching `excludedPaths` entry on both code paths:
+
+- `mergeVectorPolicy` (alters the units container in place) preserves any
+  existing `excludedPaths` entries and appends `<embeddingPath>/*` exactly
+  once.
+- `buildEdgesDefinition` (creates the inferred-edges container fresh)
+  emits `excludedPaths: [{ path: '<embeddingPath>/*' }]` alongside the
+  vector index entry.
+
+The exclusion is keyed off the configured `embeddingPath`, so custom paths
+(e.g., `/myCustomVector`) thread through automatically. Re-running the
+provisioner is idempotent — the wildcard never duplicates.
+
 ## What's new in 0.3.2
 
 Data-safety fix. `CosmosVectorEmbeddingStore.set()` and `.clear()` now use Cosmos NoSQL JSON Patch for atomic, field-level updates. The 0.3.0/0.3.1 implementation followed a `read -> merge -> upsert` pattern that wiped pre-existing fields on the document (e.g., `content`, `title`, `type`) whenever the read returned partial data or failed transiently. With patch-based writes, every other field on the document is left untouched.
