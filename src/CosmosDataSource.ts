@@ -1,4 +1,4 @@
-import { Datasource } from '@inferagraph/core';
+import { DataSource } from '@inferagraph/core';
 import type {
   DataAdapterConfig, GraphData, NodeId, NodeData, EdgeData,
   ContentData, PaginationOptions, PaginatedResult, DataFilter,
@@ -8,7 +8,7 @@ import { CosmosClient, Container, Database } from '@azure/cosmos';
 import type { SqlParameter } from '@azure/cosmos';
 import type { CosmosDataSourceConfig } from './types.js';
 
-export class CosmosDataSource extends Datasource {
+export class CosmosDataSource extends DataSource {
   readonly name = 'cosmosdb';
   private client: CosmosClient | null = null;
   private database: Database | null = null;
