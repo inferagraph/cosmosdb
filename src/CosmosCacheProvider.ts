@@ -1,6 +1,6 @@
 import { CosmosClient } from '@azure/cosmos';
 import type { Container, Database } from '@azure/cosmos';
-import type { CacheProvider } from '@inferagraph/core';
+import type { CacheProvider } from '@inferagraph/core/data';
 
 /**
  * Configuration for {@link CosmosCacheProvider}. Backing storage is one

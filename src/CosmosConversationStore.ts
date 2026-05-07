@@ -1,6 +1,6 @@
 import { CosmosClient } from '@azure/cosmos';
 import type { Container, Database } from '@azure/cosmos';
-import type { ConversationStore, ConversationTurn } from '@inferagraph/core';
+import type { ConversationStore, ConversationTurn } from '@inferagraph/core/data';
 
 /**
  * Configuration for {@link CosmosConversationStore}. Backing storage is one

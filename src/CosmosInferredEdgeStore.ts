@@ -7,7 +7,7 @@ import type {
   NodeId,
   SearchVectorHit,
   Vector,
-} from '@inferagraph/core';
+} from '@inferagraph/core/data';
 
 /**
  * Configuration for {@link CosmosInferredEdgeStore}. Provider-agnostic:

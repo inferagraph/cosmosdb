@@ -7,7 +7,7 @@ import type {
   SearchVectorHit,
   SimilarHit,
   Vector,
-} from '@inferagraph/core';
+} from '@inferagraph/core/data';
 
 /**
  * Configuration for {@link CosmosVectorEmbeddingStore}. Targets the Cosmos NoSQL

@@ -1,9 +1,9 @@
-import { DataSource } from '@inferagraph/core';
+import { DataSource } from '@inferagraph/core/data';
 import type {
   DataAdapterConfig, GraphData, NodeId, NodeData, EdgeData,
   ContentData, PaginationOptions, PaginatedResult, DataFilter,
   SearchVectorHit, Vector,
-} from '@inferagraph/core';
+} from '@inferagraph/core/data';
 import { CosmosClient, Container, Database } from '@azure/cosmos';
 import type { SqlParameter } from '@azure/cosmos';
 import type { CosmosDataSourceConfig } from './types.js';
