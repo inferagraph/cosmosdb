@@ -42,7 +42,7 @@
     "@azure/cosmos": "^4.2.0"
   },
   "devDependencies": {
-    "@inferagraph/core": "link:../inferagraph",
+    "@inferagraph/core": "^0.9.1",
     "@vitest/coverage-v8": "^3.1.1",
     "tsup": "^8.4.0",
     "typescript": "^5.7.0",
