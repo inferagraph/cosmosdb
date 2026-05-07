@@ -117,32 +117,46 @@ export class CosmosVectorEmbeddingStore implements EmbeddingStore {
   }
 
   /**
-   * Persist an embedding by upserting the existing document with new
-   * embedding fields. When the document does not yet exist (cold seed, the
-   * upsert preserves the embedding fields under a stub `{id}` document) so
-   * the next `tools/`-side run can patch the rest of the body.
+   * Persist an embedding by atomically patching the embedding fields onto the
+   * existing document. Uses Cosmos NoSQL JSON Patch (`add` op semantics: add
+   * a missing field, replace an existing one, never touch other fields).
+   *
+   * If the document does not exist, this method skips silently — the host is
+   * responsible for ensuring the unit document exists before indexing. The
+   * 0.3.0/0.3.1 fallback that synthesized a stub `{id}` doc was data-
+   * destructive whenever a transient read error fired, because the follow-up
+   * upsert wiped the real body. Skip-on-missing keeps embedding writes
+   * strictly additive.
    */
   async set(record: EmbeddingRecord): Promise<void> {
     const container = this.containerFor(this.defaultContainerName);
-    let existing: Record<string, unknown> | undefined;
+    const partitionKeyValue = this.derivePartitionKey(record.nodeId);
     try {
-      const result = await container.item(record.nodeId).read();
-      existing = result.resource as Record<string, unknown> | undefined;
+      await container.item(record.nodeId, partitionKeyValue).patch([
+        { op: 'add', path: `/${this.fieldName}`, value: record.vector },
+        { op: 'add', path: '/embeddingModel', value: record.meta.model },
+        { op: 'add', path: '/embeddingVersion', value: record.meta.modelVersion },
+        { op: 'add', path: '/embeddingHash', value: record.meta.contentHash },
+        { op: 'add', path: '/embeddingGeneratedAt', value: record.meta.generatedAt },
+      ]);
     } catch (err) {
-      // Cosmos throws a 404-coded error when the doc is missing; treat as
-      // "no existing body" rather than a hard failure.
-      if (!is404(err)) throw err;
+      if (is404(err)) {
+        // Document not yet seeded by the host. Do NOT create a stub — the old
+        // behavior caused the wipe regression when reads transiently failed.
+        return;
+      }
+      throw err;
     }
-    const merged: Record<string, unknown> = {
-      ...(existing ?? { id: record.nodeId }),
-      id: record.nodeId,
-      [this.fieldName]: record.vector,
-      embeddingModel: record.meta.model,
-      embeddingVersion: record.meta.modelVersion,
-      embeddingHash: record.meta.contentHash,
-      embeddingGeneratedAt: record.meta.generatedAt,
-    };
-    await container.items.upsert(merged);
+  }
+
+  /**
+   * Default partitioning: the document's `id` IS the partition key (path
+   * `/id`). Hosts whose containers partition by something else can override
+   * this by extending the class. Kept private to hold the public API surface
+   * stable; widen only when a real consumer needs it.
+   */
+  private derivePartitionKey(nodeId: NodeId): string {
+    return nodeId;
   }
 
   /**
@@ -169,8 +183,13 @@ export class CosmosVectorEmbeddingStore implements EmbeddingStore {
    * Drop every embedding field from every document in the default container.
    * Implementation note: a true `clear` would delete the documents
    * themselves, but the units container also holds the source-of-truth body —
-   * we only zero out the embedding fields. Hosts that want to fully reset
-   * vectors should drop and re-provision the container instead.
+   * we only zero out the embedding fields via Cosmos JSON Patch `remove` ops
+   * so other fields (e.g. host-owned `content`, `title`) survive. Hosts that
+   * want to fully reset vectors should drop and re-provision the container.
+   *
+   * Each field is patched independently because Cosmos `remove` errors when
+   * the path does not exist on the doc; tolerating that means a partially-
+   * embedded doc still gets cleaned of whatever fields ARE present.
    */
   async clear(): Promise<void> {
     const container = this.containerFor(this.defaultContainerName);
@@ -180,13 +199,27 @@ export class CosmosVectorEmbeddingStore implements EmbeddingStore {
         parameters: [],
       })
       .fetchAll();
+    const paths = [
+      `/${this.fieldName}`,
+      '/embeddingModel',
+      '/embeddingVersion',
+      '/embeddingHash',
+      '/embeddingGeneratedAt',
+    ];
     for (const doc of resources as { id: string }[]) {
-      const result = await container.item(doc.id).read();
-      const existing = result.resource as Record<string, unknown> | undefined;
-      if (!existing) continue;
-      const { [this.fieldName]: _embedding, embeddingModel: _model, embeddingVersion: _v, embeddingHash: _h, embeddingGeneratedAt: _g, ...rest } = existing;
-      void _embedding; void _model; void _v; void _h; void _g;
-      await container.items.upsert(rest);
+      const partitionKeyValue = this.derivePartitionKey(doc.id);
+      for (const path of paths) {
+        try {
+          await container.item(doc.id, partitionKeyValue).patch([
+            { op: 'remove', path },
+          ]);
+        } catch (err) {
+          // Cosmos returns 400 with a "path not found" sub-message when
+          // patching a missing path with `remove`; some SDK paths surface
+          // 404. Either way the field was already absent — keep going.
+          if (!is400OrPathNotFound(err) && !is404(err)) throw err;
+        }
+      }
     }
   }
 
@@ -276,4 +309,17 @@ function is404(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const code = (err as { code?: number | string }).code;
   return code === 404 || code === '404';
+}
+
+/**
+ * Cosmos returns HTTP 400 with a message like "Path not found" when a JSON
+ * Patch `remove` op targets a field that does not exist on the document.
+ * Treat that as a benign idempotent no-op for the embedding-field cleaner.
+ */
+function is400OrPathNotFound(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const code = (err as { code?: number | string }).code;
+  if (code === 400 || code === '400') return true;
+  const message = (err as { message?: string }).message ?? '';
+  return /path\s*not\s*found/i.test(message);
 }

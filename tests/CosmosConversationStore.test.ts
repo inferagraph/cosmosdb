@@ -7,15 +7,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //   - container.item(id, pk).read() -> resource | 404
 //   - container.item(id, pk).delete() -> removes the entry
 const { mockState, makeContainer } = vi.hoisted(() => {
+  type PatchOp =
+    | { op: 'add'; path: string; value: unknown }
+    | { op: 'remove'; path: string };
+
   function makeContainer(name: string) {
     const docs = new Map<string, Record<string, unknown>>();
     const upsertCalls: Record<string, unknown>[] = [];
     const deletedIds: string[] = [];
+    const patchCalls: { id: string; pk: unknown; ops: PatchOp[] }[] = [];
     const container = {
       _name: name,
       docs,
       upsertCalls,
       deletedIds,
+      patchCalls,
       items: {
         upsert: vi.fn().mockImplementation(async (item: Record<string, unknown>) => {
           upsertCalls.push({ ...item });
@@ -26,7 +32,7 @@ const { mockState, makeContainer } = vi.hoisted(() => {
           fetchAll: vi.fn().mockResolvedValue({ resources: [] }),
         }),
       },
-      item: vi.fn().mockImplementation((id: string) => ({
+      item: vi.fn().mockImplementation((id: string, pk?: unknown) => ({
         read: vi.fn().mockImplementation(async () => {
           const doc = docs.get(id);
           if (!doc) {
@@ -45,6 +51,39 @@ const { mockState, makeContainer } = vi.hoisted(() => {
           deletedIds.push(id);
           docs.delete(id);
           return {};
+        }),
+        patch: vi.fn().mockImplementation(async (ops: PatchOp[]) => {
+          patchCalls.push({ id, pk, ops });
+          let doc = docs.get(id);
+          if (!doc) {
+            const err = new Error('NotFound') as Error & { code: number };
+            err.code = 404;
+            throw err;
+          }
+          doc = { ...doc };
+          for (const op of ops) {
+            if (op.op === 'add' && op.path === '/turns/-') {
+              const turns = Array.isArray(doc.turns)
+                ? [...(doc.turns as unknown[])]
+                : [];
+              turns.push((op as { value: unknown }).value);
+              doc.turns = turns;
+              continue;
+            }
+            const field = op.path.startsWith('/') ? op.path.slice(1) : op.path;
+            if (op.op === 'add') {
+              doc[field] = (op as { value: unknown }).value;
+            } else if (op.op === 'remove') {
+              if (!(field in doc)) {
+                const err = new Error('PathNotFound') as Error & { code: number };
+                err.code = 400;
+                throw err;
+              }
+              delete doc[field];
+            }
+          }
+          docs.set(id, doc);
+          return { resource: doc };
         }),
       })),
     };
@@ -102,7 +141,8 @@ describe('CosmosConversationStore', () => {
     it('appends to an existing conversation, preserving prior turns', async () => {
       await store.appendTurn('c1', { role: 'user', content: 'hi', timestamp: 1 });
       await store.appendTurn('c1', { role: 'assistant', content: 'hi back', timestamp: 2 });
-      const doc = mockState.conversations.upsertCalls.at(-1)!;
+      // Second append goes through patch; final doc state is the source of truth.
+      const doc = mockState.conversations.docs.get('c1')!;
       expect(doc.turns).toEqual([
         { role: 'user', content: 'hi', timestamp: 1 },
         { role: 'assistant', content: 'hi back', timestamp: 2 },
@@ -117,10 +157,18 @@ describe('CosmosConversationStore', () => {
       });
       await ttlStore.appendTurn('c1', { role: 'user', content: 'a', timestamp: 1 });
       await ttlStore.appendTurn('c1', { role: 'assistant', content: 'b', timestamp: 2 });
-      const first = mockState.conversations.upsertCalls[0];
-      const second = mockState.conversations.upsertCalls[1];
-      expect(first.ttl).toBe(3600);
-      expect(second.ttl).toBe(3600);
+      // First append seeds the doc via upsert; subsequent appends slide ttl
+      // forward via a patch `add /ttl`. Both writes carry the configured TTL.
+      const firstUpsert = mockState.conversations.upsertCalls[0];
+      expect(firstUpsert.ttl).toBe(3600);
+      const ttlPatch = mockState.conversations.patchCalls.find(c =>
+        c.ops.some(o => o.path === '/ttl'),
+      );
+      expect(ttlPatch).toBeDefined();
+      const ttlOp = ttlPatch!.ops.find(o => o.path === '/ttl') as
+        | { value: number }
+        | undefined;
+      expect(ttlOp?.value).toBe(3600);
     });
 
     it('omits ttl when ttlSeconds is not configured', async () => {

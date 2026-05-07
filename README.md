@@ -2,6 +2,16 @@
 
 Azure Cosmos DB NoSQL bindings for [@inferagraph/core](https://github.com/inferagraph/core): datasource, vector embedding store, inferred-edge store, conversation store, and cache provider — all in one package.
 
+## What's new in 0.3.2
+
+Data-safety fix. `CosmosVectorEmbeddingStore.set()` and `.clear()` now use Cosmos NoSQL JSON Patch for atomic, field-level updates. The 0.3.0/0.3.1 implementation followed a `read -> merge -> upsert` pattern that wiped pre-existing fields on the document (e.g., `content`, `title`, `type`) whenever the read returned partial data or failed transiently. With patch-based writes, every other field on the document is left untouched.
+
+The same fix applies to `CosmosConversationStore.appendTurn`, which now uses `add /turns/-` to atomically append a turn (and `add /ttl` to slide the sliding TTL forward) instead of read-merge-upsert. Host-owned metadata fields on the conversation doc survive every append.
+
+**Behavior change (breaking, hence the `!`):** `CosmosVectorEmbeddingStore.set()` no longer creates a stub `{id}` document when the target doc is missing. Hosts must ensure unit documents exist before indexing — the typical flow is a server-side upsert pass that writes the body, then a separate reindex pass that adds embeddings on top. The previous stub-creation fallback masked the wipe regression in production.
+
+`CosmosCacheProvider` and `CosmosInferredEdgeStore` are unchanged: their documents are end-to-end owned by the provider/indexer (no host fields to preserve), so full upsert / bulk-replace is the documented contract. Contract pin-down tests were added for both.
+
 > **Migration from `@inferagraph/cosmosdb-datasource@0.2.0`:**
 > ```bash
 > pnpm remove @inferagraph/cosmosdb-datasource

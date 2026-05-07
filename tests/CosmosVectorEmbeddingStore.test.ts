@@ -7,13 +7,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // ---------------------------------------------------------------------------
 const { mockState, makeContainer } = vi.hoisted(() => {
   type QueryCall = { spec: unknown };
+  type PatchOp =
+    | { op: 'add'; path: string; value: unknown }
+    | { op: 'remove'; path: string }
+    | { op: 'replace'; path: string; value: unknown };
 
   function makeContainer(name: string) {
     const queryCalls: QueryCall[] = [];
     const queryResources: unknown[][] = [];
     const upsertedItems: unknown[] = [];
-    const itemReads = new Map<string, unknown>();
+    const docs = new Map<string, Record<string, unknown>>();
     const itemDeleted: string[] = [];
+    const patchCalls: { id: string; pk: unknown; ops: PatchOp[] }[] = [];
+    let patchShouldThrow404 = false;
     let itemReadShouldThrow404 = false;
 
     const container = {
@@ -21,8 +27,11 @@ const { mockState, makeContainer } = vi.hoisted(() => {
       queryCalls,
       queryResources,
       upsertedItems,
-      itemReads,
+      docs,
       itemDeleted,
+      patchCalls,
+      get patchShouldThrow404() { return patchShouldThrow404; },
+      set patchShouldThrow404(v: boolean) { patchShouldThrow404 = v; },
       get itemReadShouldThrow404() { return itemReadShouldThrow404; },
       set itemReadShouldThrow404(v: boolean) { itemReadShouldThrow404 = v; },
       items: {
@@ -37,14 +46,14 @@ const { mockState, makeContainer } = vi.hoisted(() => {
           return { resource: item };
         }),
       },
-      item: vi.fn().mockImplementation((id: string) => ({
+      item: vi.fn().mockImplementation((id: string, pk?: unknown) => ({
         read: vi.fn().mockImplementation(async () => {
           if (container.itemReadShouldThrow404) {
             const err = new Error('NotFound') as Error & { code: number };
             err.code = 404;
             throw err;
           }
-          return { resource: itemReads.get(id) };
+          return { resource: docs.get(id) };
         }),
         delete: vi.fn().mockImplementation(async () => {
           itemDeleted.push(id);
@@ -54,6 +63,38 @@ const { mockState, makeContainer } = vi.hoisted(() => {
             throw err;
           }
           return {};
+        }),
+        // Cosmos NoSQL JSON Patch — applies ops atomically to the doc.
+        patch: vi.fn().mockImplementation(async (ops: PatchOp[]) => {
+          patchCalls.push({ id, pk, ops });
+          if (container.patchShouldThrow404) {
+            const err = new Error('NotFound') as Error & { code: number };
+            err.code = 404;
+            throw err;
+          }
+          const doc = docs.get(id);
+          if (!doc) {
+            const err = new Error('NotFound') as Error & { code: number };
+            err.code = 404;
+            throw err;
+          }
+          for (const op of ops) {
+            const field = op.path.startsWith('/') ? op.path.slice(1) : op.path;
+            if (op.op === 'add' || op.op === 'replace') {
+              doc[field] = op.value;
+            } else if (op.op === 'remove') {
+              if (!(field in doc)) {
+                // Real Cosmos returns 400 with "path not found" — we throw a
+                // 404-coded error to keep the mock simple; the store's
+                // remove-path-not-found tolerance treats 400 and 404 alike.
+                const err = new Error('PathNotFound') as Error & { code: number };
+                err.code = 404;
+                throw err;
+              }
+              delete doc[field];
+            }
+          }
+          return { resource: doc };
         }),
       })),
     };
@@ -160,9 +201,8 @@ describe('CosmosVectorEmbeddingStore', () => {
 
   // ---- set() ----
   describe('set', () => {
-    it('upserts the embedding fields onto the document', async () => {
-      // Existing doc body present
-      mockState.units.itemReads.set('n1', { id: 'n1', name: 'Cain' });
+    it('patches the embedding fields onto the document, leaving other fields intact', async () => {
+      mockState.units.docs.set('n1', { id: 'n1', name: 'Cain' });
       await store.set({
         nodeId: 'n1',
         vector: [0.11, 0.22, 0.33],
@@ -173,20 +213,24 @@ describe('CosmosVectorEmbeddingStore', () => {
           generatedAt: '2026-05-06T01:00:00.000Z',
         },
       });
-      expect(mockState.units.upsertedItems).toHaveLength(1);
-      const item = mockState.units.upsertedItems[0] as Record<string, unknown>;
-      expect(item.id).toBe('n1');
-      expect(item.embedding).toEqual([0.11, 0.22, 0.33]);
-      expect(item.embeddingModel).toBe('text-embedding-3-large');
-      expect(item.embeddingVersion).toBe('2024-10-21');
-      expect(item.embeddingHash).toBe('hash-abc');
-      expect(item.embeddingGeneratedAt).toBe('2026-05-06T01:00:00.000Z');
-      // existing fields preserved
-      expect(item.name).toBe('Cain');
+      // No upsert ever (the wipe path).
+      expect(mockState.units.upsertedItems).toHaveLength(0);
+      expect(mockState.units.patchCalls).toHaveLength(1);
+      const doc = mockState.units.docs.get('n1');
+      expect(doc!.id).toBe('n1');
+      expect(doc!.name).toBe('Cain');
+      expect(doc!.embedding).toEqual([0.11, 0.22, 0.33]);
+      expect(doc!.embeddingModel).toBe('text-embedding-3-large');
+      expect(doc!.embeddingVersion).toBe('2024-10-21');
+      expect(doc!.embeddingHash).toBe('hash-abc');
+      expect(doc!.embeddingGeneratedAt).toBe('2026-05-06T01:00:00.000Z');
     });
 
-    it('upserts a stub document when the existing doc is missing', async () => {
-      mockState.units.itemReadShouldThrow404 = true;
+    it('skips silently when the document does not exist (no stub-doc creation)', async () => {
+      // Host has not seeded this node's body. The 0.3.1 behavior was to upsert
+      // a stub `{id}` doc, which masked real wipe scenarios in production. The
+      // fix: skip — host owns body lifecycle, embedding writes are additive.
+      mockState.units.patchShouldThrow404 = true;
       await store.set({
         nodeId: 'orphan',
         vector: [1, 2, 3],
@@ -197,10 +241,20 @@ describe('CosmosVectorEmbeddingStore', () => {
           generatedAt: '2026-05-06T02:00:00.000Z',
         },
       });
-      expect(mockState.units.upsertedItems).toHaveLength(1);
-      const item = mockState.units.upsertedItems[0] as Record<string, unknown>;
-      expect(item.id).toBe('orphan');
-      expect(item.embedding).toEqual([1, 2, 3]);
+      expect(mockState.units.upsertedItems).toHaveLength(0);
+      expect(mockState.units.docs.get('orphan')).toBeUndefined();
+    });
+
+    it('passes the doc id as the partition key (default /id partitioning)', async () => {
+      mockState.units.docs.set('n1', { id: 'n1' });
+      await store.set({
+        nodeId: 'n1',
+        vector: [0.1],
+        meta: { model: 'm', modelVersion: 'v', contentHash: 'h', generatedAt: 't' },
+      });
+      const call = mockState.units.patchCalls[0];
+      expect(call.id).toBe('n1');
+      expect(call.pk).toBe('n1');
     });
   });
 

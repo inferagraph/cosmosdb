@@ -66,15 +66,32 @@ export class CosmosConversationStore implements ConversationStore {
   }
 
   async appendTurn(conversationId: string, turn: ConversationTurn): Promise<void> {
-    const existing = await this.readDoc(conversationId);
-    const turns = existing?.turns ? [...existing.turns, turn] : [turn];
+    const container = this.container();
+    const partitionKeyValue = conversationId;
+    // First-touch path: doc does not exist yet, so seed it via upsert. Once
+    // it exists, every subsequent append uses patch so host-owned metadata
+    // fields on the doc survive (the previous read-merge-upsert path wiped
+    // them on every turn).
+    try {
+      const ops: Array<{ op: 'add'; path: string; value: unknown }> = [
+        { op: 'add', path: '/turns/-', value: turn },
+      ];
+      if (this.ttlSeconds !== undefined) {
+        ops.push({ op: 'add', path: '/ttl', value: this.ttlSeconds });
+      }
+      await container.item(conversationId, partitionKeyValue).patch(ops);
+      return;
+    } catch (err) {
+      if (!is404(err)) throw err;
+    }
+    // Doc not present — create it. This is the only place we ever upsert.
     const doc: ConversationDoc = {
       id: conversationId,
       pk: conversationId,
-      turns,
+      turns: [turn],
     };
     if (this.ttlSeconds !== undefined) doc.ttl = this.ttlSeconds;
-    await this.container().items.upsert(doc);
+    await container.items.upsert(doc);
   }
 
   async clear(conversationId: string): Promise<void> {
