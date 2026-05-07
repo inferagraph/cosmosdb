@@ -2,6 +2,27 @@
 
 Azure Cosmos DB NoSQL bindings for [@inferagraph/core](https://github.com/inferagraph/core): datasource, vector embedding store, inferred-edge store, conversation store, and cache provider — all in one package.
 
+## What's new in 0.3.4
+
+Follow-up bug fix for `provisionVectorContainers`. Cosmos NoSQL also requires
+the indexing policy to declare what to do with paths that are NOT explicitly
+excluded — the "special mandatory indexing path `/`" rule. When
+`indexingPolicy.includedPaths` is omitted, container creation is rejected
+with:
+
+> The special mandatory indexing path "/" is not provided in any of the path type sets. Please provide this path in one of the sets.
+
+`provisionVectorContainers` now defaults `includedPaths` to the catch-all
+`[{ path: '/*' }]` on both code paths:
+
+- `buildEdgesDefinition` (creates the inferred-edges container fresh) emits
+  `includedPaths: [{ path: '/*' }]` alongside `vectorIndexes` and
+  `excludedPaths`.
+- `mergeVectorPolicy` (alters the units container in place) preserves any
+  existing `includedPaths` from the source container and falls back to the
+  catch-all when it is absent — important for accounts whose units container
+  predates this provisioner.
+
 ## What's new in 0.3.3
 
 Bug fix for `provisionVectorContainers`. Cosmos NoSQL requires every path

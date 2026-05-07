@@ -159,6 +159,7 @@ function mergeVectorPolicy(
     ? baseIndexing.vectorIndexes.filter(v => v.path !== opts.path)
     : [];
   vectorIndexes.push({ path: opts.path, type: toVectorIndexType(opts.indexType) });
+  const includedPaths = baseIndexing.includedPaths ?? [{ path: '/*' }];
   const excludedPaths = buildVectorExcludePaths(baseIndexing.excludedPaths, opts.path);
   const vectorPolicy: VectorEmbeddingPolicy = {
     vectorEmbeddings: [
@@ -173,7 +174,7 @@ function mergeVectorPolicy(
   return {
     ...(existing ?? { id }),
     id: existing?.id ?? id,
-    indexingPolicy: { ...baseIndexing, vectorIndexes, excludedPaths },
+    indexingPolicy: { ...baseIndexing, includedPaths, vectorIndexes, excludedPaths },
     vectorEmbeddingPolicy: vectorPolicy,
   } as ContainerDefinition;
 }
@@ -185,6 +186,7 @@ function buildEdgesDefinition(id: string, opts: VectorOpts): ContainerDefinition
     indexingPolicy: {
       indexingMode: 'consistent',
       automatic: true,
+      includedPaths: [{ path: '/*' }],
       vectorIndexes: [{ path: opts.path, type: toVectorIndexType(opts.indexType) }],
       excludedPaths: buildVectorExcludePaths(undefined, opts.path),
     },

@@ -1,6 +1,6 @@
 {
   "name": "@inferagraph/cosmosdb",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Azure Cosmos DB NoSQL datasource, vector store, inferred-edge store, conversation store, and cache provider for InferaGraph",
   "repository": {
     "type": "git",
